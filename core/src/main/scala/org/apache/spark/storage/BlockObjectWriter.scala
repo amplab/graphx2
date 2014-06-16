@@ -17,7 +17,7 @@
 
 package org.apache.spark.storage
 
-import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
+import java.io.{BufferedOutputStream, ByteArrayOutputStream, FileOutputStream, File, OutputStream}
 import java.nio.channels.FileChannel
 
 import org.apache.spark.Logging
@@ -42,7 +42,7 @@ private[spark] abstract class BlockObjectWriter(val blockId: BlockId) {
    * Flush the partial writes and commit them as a single atomic block. Return the
    * number of bytes written for this commit.
    */
-  def commit(): Long
+  def commit(): Array[Byte]
 
   /**
    * Reverts writes that haven't been flushed yet. Callers should invoke this function
@@ -104,7 +104,7 @@ private[spark] class DiskBlockObjectWriter(
   /** The file channel, used for repositioning / truncating the file. */
   private var channel: FileChannel = null
   private var bs: OutputStream = null
-  private var fos: FileOutputStream = null
+  private var fos: ByteArrayOutputStream = null
   private var ts: TimeTrackingOutputStream = null
   private var objOut: SerializationStream = null
   private val initialPosition = file.length()
@@ -113,9 +113,8 @@ private[spark] class DiskBlockObjectWriter(
   private var _timeWriting = 0L
 
   override def open(): BlockObjectWriter = {
-    fos = new FileOutputStream(file, true)
+    fos = new ByteArrayOutputStream()
     ts = new TimeTrackingOutputStream(fos)
-    channel = fos.getChannel()
     lastValidPosition = initialPosition
     bs = compressStream(new BufferedOutputStream(ts, bufferSize))
     objOut = serializer.newInstance().serializeStream(bs)
@@ -128,9 +127,6 @@ private[spark] class DiskBlockObjectWriter(
       if (syncWrites) {
         // Force outstanding writes to disk and track how long it takes
         objOut.flush()
-        val start = System.nanoTime()
-        fos.getFD.sync()
-        _timeWriting += System.nanoTime() - start
       }
       objOut.close()
 
@@ -147,18 +143,18 @@ private[spark] class DiskBlockObjectWriter(
 
   override def isOpen: Boolean = objOut != null
 
-  override def commit(): Long = {
+  override def commit(): Array[Byte] = {
     if (initialized) {
       // NOTE: Because Kryo doesn't flush the underlying stream we explicitly flush both the
       //       serializer stream and the lower level stream.
       objOut.flush()
       bs.flush()
       val prevPos = lastValidPosition
-      lastValidPosition = channel.position()
-      lastValidPosition - prevPos
+      lastValidPosition = fos.size()
+      fos.toByteArray
     } else {
       // lastValidPosition is zero if stream is uninitialized
-      lastValidPosition
+      null
     }
   }
 
@@ -168,7 +164,7 @@ private[spark] class DiskBlockObjectWriter(
       // truncate the file to the last valid position.
       objOut.flush()
       bs.flush()
-      channel.truncate(lastValidPosition)
+      throw new UnsupportedOperationException("Revert temporarily broken due to in memory shuffle code changes.")
     }
   }
 
@@ -180,7 +176,7 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   override def fileSegment(): FileSegment = {
-    new FileSegment(file, initialPosition, bytesWritten)
+    new FileSegment(null, initialPosition, bytesWritten)
   }
 
   // Only valid if called after close()
