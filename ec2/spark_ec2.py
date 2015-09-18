@@ -46,7 +46,7 @@ AMI_PREFIX = "https://raw.github.com/mesos/spark-ec2/v2/ami-list"
 # Configure and parse our command-line arguments
 def parse_args():
   parser = OptionParser(usage="spark-ec2 [options] <action> <cluster_name>"
-      + "\n\n<action> can be: launch, destroy, login, stop, start, get-master",
+      + "\n\n<action> can be: launch, destroy, login, stop, start, get-master, get-slaves",
       add_help_option=False)
   parser.add_option("-h", "--help", action="help",
                     help="Show this help message and exit")
@@ -760,6 +760,15 @@ def real_main():
   elif action == "get-master":
     (master_nodes, slave_nodes) = get_existing_cluster(conn, opts, cluster_name)
     print master_nodes[0].public_dns_name
+
+  elif action == "get-slaves":
+      (master_nodes, slave_nodes) = get_existing_cluster(conn, opts, cluster_name)
+
+      for slave in slave_nodes:
+          if not slave.public_dns_name and not opts.private_ips:
+              print("Slave has no public DNS name.  Maybe you meant to specify --private-ips?")
+          else:
+              print(get_dns_name(slave, opts.private_ips))
 
   elif action == "stop":
     response = raw_input("Are you sure you want to stop the cluster " +
